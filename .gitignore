@@ -1,0 +1,35 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# HarmonyOS / HiSilicon
+**/node_modules/
+**/oh_modules/
+**/.hvigor/
+**/build/
+**/.test/
+**/.clangd/
+**/.clang-format
+**/.clang-tidy
+**/.appanalyzer/
+.cxx/
+local.properties
+
+# ESP-IDF / PlatformIO
+**/.pio/
+**/build/
+**/sdkconfig.old
+**/managed_components/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Misc
+*.log
+*.tmp
+__pycache__/
+*.pyc
