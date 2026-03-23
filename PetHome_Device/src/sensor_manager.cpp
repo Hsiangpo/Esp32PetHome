@@ -1,6 +1,7 @@
 #include "sensor_manager.h"
 
 #include <Arduino.h>
+#include <time.h>
 #include <Wire.h>
 #include "board_pins.h"
 
@@ -13,6 +14,14 @@ int ClampInt(const int value, const int min_value, const int max_value) {
     return max_value;
   }
   return value;
+}
+
+uint64_t CurrentUnixMs() {
+  const time_t now = time(nullptr);
+  if (now > 1700000000) {
+    return static_cast<uint64_t>(now) * 1000ULL;
+  }
+  return static_cast<uint64_t>(millis());
 }
 }  // namespace
 
@@ -34,9 +43,52 @@ void SensorManager::Begin() {
   hx711_ok_ = true;
 }
 
+void SensorManager::PushEnvHistory(const float temp_c, const float hum_rh,
+                                   const uint32_t ts_ms) {
+  temp_history_[history_head_] = temp_c;
+  hum_history_[history_head_] = hum_rh;
+  history_ts_ms_[history_head_] = ts_ms;
+  history_head_ = (history_head_ + 1U) % kEnvHistoryCapacity;
+  if (history_size_ < kEnvHistoryCapacity) {
+    history_size_++;
+  }
+}
+
+void SensorManager::ComputeEnvAverage(const uint32_t now_ms, float& avg_temp_c,
+                                      float& avg_hum_rh) const {
+  float temp_sum = 0.0f;
+  float hum_sum = 0.0f;
+  size_t valid_count = 0;
+
+  for (size_t i = 0; i < history_size_; ++i) {
+    const size_t offset = (history_head_ + kEnvHistoryCapacity - 1U - i) %
+                          kEnvHistoryCapacity;
+    const uint32_t sample_ts = history_ts_ms_[offset];
+    if (now_ms < sample_ts) {
+      continue;
+    }
+    if ((now_ms - sample_ts) > kEnvAverageWindowMs) {
+      continue;
+    }
+    temp_sum += temp_history_[offset];
+    hum_sum += hum_history_[offset];
+    valid_count++;
+  }
+
+  if (valid_count == 0U) {
+    avg_temp_c = last_temp_;
+    avg_hum_rh = last_hum_;
+    return;
+  }
+
+  avg_temp_c = temp_sum / static_cast<float>(valid_count);
+  avg_hum_rh = hum_sum / static_cast<float>(valid_count);
+}
+
 SensorSnapshot SensorManager::Read() {
   SensorSnapshot snapshot;
-  snapshot.ts = static_cast<uint64_t>(millis());
+  snapshot.ts = CurrentUnixMs();
+  const uint32_t now_ms = millis();
   
   failed_ = false;
   last_error_ = "";
@@ -76,8 +128,13 @@ SensorSnapshot SensorManager::Read() {
     last_food_ = f;
   }
 
-  snapshot.temp_c = last_temp_;
-  snapshot.hum_rh = last_hum_;
+  PushEnvHistory(last_temp_, last_hum_, now_ms);
+  float avg_temp_c = last_temp_;
+  float avg_hum_rh = last_hum_;
+  ComputeEnvAverage(now_ms, avg_temp_c, avg_hum_rh);
+
+  snapshot.temp_c = avg_temp_c;
+  snapshot.hum_rh = avg_hum_rh;
   snapshot.lux = last_lux_;
   snapshot.food_g = last_food_;
   snapshot.water_low = (digitalRead(board_pins::kWaterLevelDigital) == LOW);

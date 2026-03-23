@@ -7,6 +7,10 @@ struct DeviceConfig {
   String wifi_ssid;
   String wifi_password;
 
+  uint32_t sample_interval_ms = 1000;
+  uint32_t publish_interval_ms = 60000;
+  uint32_t change_publish_min_interval_ms = 5000;
+
   int food_low_threshold_g = 50;
   int feed_target_g = 50;
   uint32_t feed_max_run_ms = 20000;
@@ -57,6 +61,15 @@ inline uint32_t ClampUint32(const uint32_t value, const uint32_t min_value,
 }
 
 inline void NormalizeConfig(DeviceConfig& config) {
+  config.sample_interval_ms = ClampUint32(config.sample_interval_ms, 500, 5000);
+  config.publish_interval_ms =
+      ClampUint32(config.publish_interval_ms, 10000, 300000);
+  config.change_publish_min_interval_ms =
+      ClampUint32(config.change_publish_min_interval_ms, 1000, 60000);
+  if (config.change_publish_min_interval_ms > config.publish_interval_ms) {
+    config.change_publish_min_interval_ms = config.publish_interval_ms;
+  }
+
   config.food_low_threshold_g = ClampInt(config.food_low_threshold_g, 10, 500);
   config.feed_target_g = ClampInt(config.feed_target_g, 10, 150);
   config.feed_max_run_ms = ClampUint32(config.feed_max_run_ms, 3000, 60000);

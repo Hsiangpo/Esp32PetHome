@@ -15,8 +15,12 @@ bool HoldSatisfied(const uint32_t since_ms, const uint32_t now_ms,
 bool ShouldTriggerFeed(const float food_g, const float threshold_g,
                        const uint32_t low_hold_ms,
                        const bool currently_feeding,
+                       const bool waiting_food_recover,
                        const uint32_t low_since_ms, const uint32_t now_ms) {
   if (currently_feeding) {
+    return false;
+  }
+  if (waiting_food_recover) {
     return false;
   }
   if (food_g >= threshold_g) {

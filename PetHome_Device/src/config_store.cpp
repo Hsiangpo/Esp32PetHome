@@ -21,6 +21,12 @@ bool ConfigStore::Load(DeviceConfig& config) {
 
   config.wifi_ssid = preferences_.getString("wifi_ssid", "");
   config.wifi_password = preferences_.getString("wifi_pwd", "");
+  config.sample_interval_ms =
+      preferences_.getUInt("sample_ms", config.sample_interval_ms);
+  config.publish_interval_ms =
+      preferences_.getUInt("publish_ms", config.publish_interval_ms);
+  config.change_publish_min_interval_ms = preferences_.getUInt(
+      "change_pub_ms", config.change_publish_min_interval_ms);
 
   config.food_low_threshold_g =
       preferences_.getInt("food_low_g", config.food_low_threshold_g);
@@ -76,6 +82,9 @@ bool ConfigStore::Save(const DeviceConfig& source_config) {
 
   preferences_.putString("wifi_ssid", config.wifi_ssid);
   preferences_.putString("wifi_pwd", config.wifi_password);
+  preferences_.putUInt("sample_ms", config.sample_interval_ms);
+  preferences_.putUInt("publish_ms", config.publish_interval_ms);
+  preferences_.putUInt("change_pub_ms", config.change_publish_min_interval_ms);
 
   preferences_.putInt("food_low_g", config.food_low_threshold_g);
   preferences_.putInt("feed_g", config.feed_target_g);

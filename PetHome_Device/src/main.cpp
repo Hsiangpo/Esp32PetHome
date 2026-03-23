@@ -54,6 +54,7 @@ uint32_t g_temp_hum_fault_since_ms = 0;
 bool g_pump_locked = false;
 bool g_low_food_event_active = false;
 bool g_low_water_event_active = false;
+bool g_auto_feed_waiting_recover = false;
 bool g_wifi_was_connected = false;
 bool g_cloud_was_online = false;
 bool g_pending_wifi_offline_event = false;
@@ -63,15 +64,18 @@ String g_pending_feed_request_id = "";
 String g_pending_feed_command_name = "";
 bool g_pending_feed_active = false;
 
-constexpr uint32_t kSampleIntervalMs = 1000;
-constexpr uint32_t kPublishIntervalMs = 60000;
-constexpr uint32_t kChangePublishMinIntervalMs = 5000;
 constexpr uint32_t kFeedLowHoldMs = 3000;
 constexpr uint32_t kOfflineEventRetryMs = 5000;
 constexpr uint32_t kWiFiConnectTimeoutMs = 10000;
 constexpr uint32_t kMaxWiFiRetryBeforeAp = 3;
 
-uint64_t NowTs() { return static_cast<uint64_t>(millis()); }
+uint64_t NowTs() {
+  const time_t now = time(nullptr);
+  if (now > 1700000000) {
+    return static_cast<uint64_t>(now) * 1000ULL;
+  }
+  return static_cast<uint64_t>(millis());
+}
 
 String BuildChipSuffix() {
   const uint64_t chip_id = ESP.getEfuseMac();
@@ -175,6 +179,10 @@ void ApplyConfigField(JsonVariantConst params, const char* key, String& value) {
 }
 
 void ApplyConfigFromJson(JsonVariantConst params, DeviceConfig& config) {
+  ApplyConfigField(params, "sample_interval_ms", config.sample_interval_ms);
+  ApplyConfigField(params, "publish_interval_ms", config.publish_interval_ms);
+  ApplyConfigField(params, "change_publish_min_interval_ms",
+                   config.change_publish_min_interval_ms);
   ApplyConfigField(params, "food_low_threshold_g", config.food_low_threshold_g);
   ApplyConfigField(params, "feed_target_g", config.feed_target_g);
   ApplyConfigField(params, "feed_max_run_ms", config.feed_max_run_ms);
@@ -424,6 +432,7 @@ void AutoControlLoop(const uint32_t now_ms, const SensorSnapshot& snapshot) {
   } else {
     g_low_food_since_ms = 0;
     g_low_food_event_active = false;
+    g_auto_feed_waiting_recover = false;
   }
 
   if (control_rules::ShouldTriggerLowFoodEvent(
@@ -435,11 +444,14 @@ void AutoControlLoop(const uint32_t now_ms, const SensorSnapshot& snapshot) {
 
   if (control_rules::ShouldTriggerFeed(snapshot.food_g, g_config.food_low_threshold_g,
                                        kFeedLowHoldMs, status.servo_active,
+                                       g_auto_feed_waiting_recover,
                                        g_low_food_since_ms, now_ms)) {
     const bool ok =
         g_actuator_manager.StartFeed(now_ms, g_config.feed_max_run_ms, g_config.feed_target_g);
     if (!ok) {
       PublishEvent("FEED_FAILED", "auto_feed_interlock");
+    } else {
+      g_auto_feed_waiting_recover = true;
     }
   }
 
@@ -580,11 +592,13 @@ void PublishIfNeeded(const uint32_t now_ms, const SensorSnapshot& snapshot) {
     status.last_error = g_sensor_manager.GetLastError();
   }
 
-  const bool periodic_due = (now_ms - g_last_publish_ms) >= kPublishIntervalMs;
+  const bool periodic_due =
+      (now_ms - g_last_publish_ms) >= g_config.publish_interval_ms;
   const bool changed = HasSignificantChange(snapshot, g_last_published_snapshot,
                                             status, g_last_published_status);
   const bool change_due =
-      changed && ((now_ms - g_last_change_publish_ms) >= kChangePublishMinIntervalMs);
+      changed && ((now_ms - g_last_change_publish_ms) >=
+                  g_config.change_publish_min_interval_ms);
 
   if (!periodic_due && !change_due) {
     return;
@@ -646,15 +660,25 @@ void OnDoubleClick() {
 }
 
 void OnLongPress2s() {
-  if (g_in_settings) {
-    // 长按2秒确认保存
-    NormalizeConfig(g_config);
-    g_config_store.Save(g_config);
-    PublishEvent("CONFIG_CONFIRMED", "local_button", "INFO");
-    g_in_settings = false;
-    g_editing_item = false;
-    g_display_manager.Update(g_latest_snapshot, g_actuator_manager.GetStatus(), g_config, g_in_settings, g_editing_item);
+  if (!g_in_settings) {
+    return;
   }
+
+  if (!g_editing_item) {
+    // 首次长按2秒进入编辑态
+    g_editing_item = true;
+    g_display_manager.Update(g_latest_snapshot, g_actuator_manager.GetStatus(),
+                             g_config, g_in_settings, g_editing_item);
+    return;
+  }
+
+  // 编辑态长按2秒确认保存并退出编辑态
+  NormalizeConfig(g_config);
+  g_config_store.Save(g_config);
+  PublishEvent("CONFIG_CONFIRMED", "local_button", "INFO");
+  g_editing_item = false;
+  g_display_manager.Update(g_latest_snapshot, g_actuator_manager.GetStatus(),
+                           g_config, g_in_settings, g_editing_item);
 }
 
 void OnLongPress5s() {
@@ -740,7 +764,7 @@ void loop() {
     }
   }
 
-  if ((now_ms - g_last_sample_ms) < kSampleIntervalMs) {
+  if ((now_ms - g_last_sample_ms) < g_config.sample_interval_ms) {
     delay(5);
     return;
   }

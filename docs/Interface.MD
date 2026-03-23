@@ -14,6 +14,12 @@
 | 设备订阅命令 | `$oc/devices/{device_id}/sys/commands/#` |
 | 设备命令响应 | `$oc/devices/{device_id}/sys/commands/response/request_id={request_id}` |
 
+### 1.1 MQTT 连接鉴权（设备密钥口径）
+
+- `client_id={device_id}_0_0_{yyyyMMddHH}`
+- `username={device_id}`
+- `password=HMAC-SHA256(key=yyyyMMddHH, message=device_secret)` 的 64 位小写十六进制字符串
+
 ---
 
 ## 2. 属性上报（sys/properties/report）
@@ -88,7 +94,7 @@
 
 ## 4. 云端下发命令（sys/commands/request_id=...）
 
-### 4.1 控制命令 `pet_home_control.control`
+### 4.1 控制命令 `pet_home_control.control` / `pet_home_control.actuate`
 
 ```json
 {
@@ -99,11 +105,18 @@
     "led_on": true,
     "fan_on": false,
     "pump_on": false,
-    "feed": false,
+    "feed_once": true,
     "feed_target_g": 50
   }
 }
 ```
+
+说明：
+- `command_name` 为 `control` 或 `actuate` 时，设备端都会按同一套执行逻辑处理。
+- `paras.feed` 与 `paras.feed_once` 任一为 `true`，都会触发一次投喂动作。
+- 当前设备端内部状态字段仍命名为 `servo_active`，`GPIO4` 现阶段实际输出为标准 RC 舵机 PWM。
+- `feed_target_g` 在设备端被映射为舵机打开后的停留时长，不改变打开角度。
+- 若 `pump_on=true` 与投喂请求并发出现，设备会按互锁规则拒绝。
 
 ### 4.2 配置命令 `pet_home_config.set_config`
 
@@ -163,9 +176,10 @@
 - `2`：执行失败（如动作执行超时等，返回 FAILED）
 
 示例说明：
-- 对于 `feed_once` 或带 `feed` 的控制命令，若与水泵产生互锁冲突，直接拒绝，同步回执 `result_code: 1`，reason 为 `FEED_INTERLOCK_REJECTED`；
+- 对于 `feed_once` 或带 `feed` / `feed_once` 参数的控制命令，若与水泵产生互锁冲突，直接拒绝，同步回执 `result_code: 1`，reason 为 `FEED_INTERLOCK_REJECTED`；
 - 若投喂动作开始，设备将等待执行完毕或超时后再发出命令真实回执；
-- 若投喂动作超出 `feed_max_run_ms` 仍未完成，将返回 `result_code: 2` (FAILED)，reason 为 `FEED_TIMEOUT`，并同步触发事件 `FEED_FAILED`。
+- 若投喂动作超出 `feed_max_run_ms` 仍未完成，将返回 `result_code: 2` (FAILED)，reason 为 `FEED_TIMEOUT`，并同步触发事件 `FEED_FAILED`；
+- `response_name` 由设备端按 `command_name + "_response"` 生成，例如 `control_response`、`feed_once_response`、`set_config_response`。
 
 ---
 
@@ -188,8 +202,8 @@
 
 签名方式：
 
-- `SDK-HMAC-SHA256`
-- `X-Sdk-Date` + `Authorization`
+- `V11-HMAC-SHA256`
+- `X-Sdk-Date` + `Instance-Id` + `Authorization`
 
 ### 6.1 设备列表查询（云端接口）
 
@@ -229,7 +243,7 @@
 ```json
 {
   "ap_ssid": "PetHome_Setup_xxxx",
-  "ap_pwd": "",
+  "ap_pwd": "phA1B2C3D",
   "provisioned": false
 }
 ```

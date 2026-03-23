@@ -87,11 +87,18 @@
 - `device_id=69982a337f2e6c302f55fae1_PetHome_01`
 - `device_secret=c51179ff1a0ed9bc42e1e0280cd03692`
 - `project_id=79d1f76b8f0e47fd934f3eb393bf2e7f`
+- MQTT 登录参数（1883）：
+  - `client_id={device_id}_0_0_{yyyyMMddHH}`
+  - `username={device_id}`
+  - `password=HMAC-SHA256(key=yyyyMMddHH, message=device_secret)`（小写十六进制）
 
 ### 6.2 App 侧（IoTDA OpenAPI）
 
-- `AK=HPUA4JX3YFP88FSKLZ8N`
-- `SK=vZ2ggGBLX6ekyeZWDxopQM9J5DXmMSbUI5JNfgDg`
+- `AK=HPUAXBOD7O94OFVQKNST`
+- `SK=ai2ept3hXzrYJF8eifMBCQ9udBli9K8X5lL3dSCY`
+- `instance_id=8145412f-8cb1-46a1-8755-d692c4dc1b65`
+- 请求签名：`V11-HMAC-SHA256`（派生签名）
+- 必带请求头：`X-Sdk-Date`、`Instance-Id`、`Authorization`
 
 ---
 
@@ -159,11 +166,11 @@
   - `kDeviceId=69982a337f2e6c302f55fae1_PetHome_01`
   - `kDeviceSecret=c51179ff1a0ed9bc42e1e0280cd03692`
   - `kProjectId=79d1f76b8f0e47fd934f3eb393bf2e7f`
-  - `kIamAccessKey=HPUA4JX3YFP88FSKLZ8N`
-  - `kIamSecretKey=vZ2ggGBLX6ekyeZWDxopQM9J5DXmMSbUI5JNfgDg`
-- `PetHome_APP/entry/src/main/ets/config/iotdaDefaults.ets`
+  - `kIamAccessKey=HPUAXBOD7O94OFVQKNST`
+  - `kIamSecretKey=ai2ept3hXzrYJF8eifMBCQ9udBli9K8X5lL3dSCY`
+- `PetHome_APP/entry/src/main/ets/config/iotdaDefaultsTs.ts`
   - `baseUrl/projectId/deviceId/ak/sk/deviceSecret`
-- `PetHome_APP/entry/src/main/ets/service/PetHomeApi.ets`
+- `PetHome_APP/entry/src/main/ets/service/PetHomeApi.ts`
   - `huaweiCloudFixedConfig.productId=69982a337f2e6c302f55fae1`
 
 ---
@@ -172,5 +179,5 @@
 
 - App 直连 IoTDA App Endpoint：
   - `https://8cee850016.st1.iotda-app.cn-north-4.myhuaweicloud.com`
-- App 使用 AK/SK 进行 `SDK-HMAC-SHA256` 签名调用 IoTDA REST。
+- App 使用 AK/SK 进行 `V11-HMAC-SHA256` 派生签名调用 IoTDA REST。
 - 不再使用本地 `127.0.0.1` 后端作为默认联调路径。

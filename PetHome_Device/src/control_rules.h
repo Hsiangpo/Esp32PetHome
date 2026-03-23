@@ -10,8 +10,8 @@
 namespace control_rules {
 
 bool ShouldTriggerFeed(float food_g, float threshold_g, uint32_t low_hold_ms,
-                       bool currently_feeding, uint32_t low_since_ms,
-                       uint32_t now_ms);
+                       bool currently_feeding, bool waiting_food_recover,
+                       uint32_t low_since_ms, uint32_t now_ms);
 
 bool ShouldTriggerLowFoodEvent(float food_g, float threshold_g,
                                uint32_t low_hold_ms, uint32_t low_since_ms,

@@ -1,9 +1,54 @@
 #include "cloud_client.h"
 
 #include <WiFi.h>
+#include <mbedtls/md.h>
 #include <time.h>
 
 CloudClient* CloudClient::self_ = nullptr;
+
+namespace {
+uint64_t CurrentUnixMs() {
+  const time_t now = time(nullptr);
+  if (now > 1700000000) {
+    return static_cast<uint64_t>(now) * 1000ULL;
+  }
+  return static_cast<uint64_t>(millis());
+}
+
+String BuildMqttAuthTimestamp() {
+  const time_t now = time(nullptr);
+  if (now <= 1700000000) {
+    return "";
+  }
+  struct tm local_tm;
+  localtime_r(&now, &local_tm);
+  char out[11] = {0};
+  strftime(out, sizeof(out), "%Y%m%d%H", &local_tm);
+  return String(out);
+}
+
+String HmacSha256Hex(const String& key, const String& message) {
+  const mbedtls_md_info_t* md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (md_info == nullptr) {
+    return "";
+  }
+
+  unsigned char out[32] = {0};
+  const int rc = mbedtls_md_hmac(
+      md_info, reinterpret_cast<const unsigned char*>(key.c_str()), key.length(),
+      reinterpret_cast<const unsigned char*>(message.c_str()), message.length(),
+      out);
+  if (rc != 0) {
+    return "";
+  }
+
+  char hex[65] = {0};
+  for (int i = 0; i < 32; ++i) {
+    snprintf(&hex[i * 2], 3, "%02x", out[i]);
+  }
+  return String(hex);
+}
+}  // namespace
 
 CloudClient::CloudClient() : mqtt_client_(wifi_client_) { self_ = this; }
 
@@ -120,7 +165,7 @@ bool CloudClient::PublishEvent(const String& event_type, const String& level,
   JsonObject paras = service.createNestedObject("paras");
   paras["level"] = level;
   paras["detail"] = detail;
-  paras["ts"] = static_cast<uint64_t>(millis());
+  paras["ts"] = CurrentUnixMs();
 
   String payload;
   serializeJson(doc, payload);
@@ -185,10 +230,24 @@ bool CloudClient::EnsureMqttConnected() {
   }
   last_mqtt_retry_ms_ = now_ms;
 
-  const String client_id =
-      "pet_home_" + device_id_ + "_" + String(random(100000, 999999));
+  String timestamp = BuildMqttAuthTimestamp();
+  if (timestamp.isEmpty()) {
+    EnsureTimeSync(3000);
+    timestamp = BuildMqttAuthTimestamp();
+    if (timestamp.isEmpty()) {
+      return false;
+    }
+  }
+
+  // IoTDA 设备密钥鉴权：clientId 固定格式，password 为 HMAC-SHA256(timestamp, device_secret)
+  const String client_id = device_id_ + "_0_0_" + timestamp;
+  const String mqtt_password = HmacSha256Hex(timestamp, device_secret_);
+  if (mqtt_password.isEmpty()) {
+    return false;
+  }
+
   const bool ok = mqtt_client_.connect(client_id.c_str(), device_id_.c_str(),
-                                       device_secret_.c_str());
+                                       mqtt_password.c_str());
   if (!ok) {
     return false;
   }

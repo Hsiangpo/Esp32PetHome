@@ -1,21 +1,18 @@
-import { describe, it, expect } from '@ohos/hypium';
+﻿import { describe, it, expect } from '@ohos/hypium';
 import {
   buildFeedCommandPayload,
   buildProvisionConfigPayload,
   clampConfigValue,
-  configRangeMap,
   isValidTimeValue,
   normalizeTimeValue,
   normalizeApGateway,
-} from '../main/ets/utils/PetHomeValidators';
+} from '../main/ets/utils/PetHomeValidatorsTs';
 
 export default function petHomeValidatorsTest() {
   describe('petHomeValidatorsTest', () => {
     it('clamp_food_threshold_in_range', 0, () => {
-      const min = configRangeMap.food_low_threshold_g.min;
-      const max = configRangeMap.food_low_threshold_g.max;
-      expect(clampConfigValue('food_low_threshold_g', -10)).assertEqual(min);
-      expect(clampConfigValue('food_low_threshold_g', 9999)).assertEqual(max);
+      expect(clampConfigValue('food_low_threshold_g', -10)).assertEqual(10);
+      expect(clampConfigValue('food_low_threshold_g', 9999)).assertEqual(500);
     });
 
     it('clamp_feed_target_in_range', 0, () => {
@@ -24,10 +21,14 @@ export default function petHomeValidatorsTest() {
     });
 
     it('clamp_temp_hum_in_range', 0, () => {
-      const tempHighMax = configRangeMap.temp_high_threshold_c.max;
-      const humLowMin = configRangeMap.hum_low_threshold_rh.min;
-      expect(clampConfigValue('temp_high_threshold_c', 60)).assertEqual(tempHighMax);
-      expect(clampConfigValue('hum_low_threshold_rh', -10)).assertEqual(humLowMin);
+      expect(clampConfigValue('temp_high_threshold_c', 60)).assertEqual(40);
+      expect(clampConfigValue('hum_low_threshold_rh', -10)).assertEqual(10);
+    });
+
+    it('clamp_sampling_publish_intervals_in_range', 0, () => {
+      expect(clampConfigValue('sample_interval_ms', 100)).assertEqual(500);
+      expect(clampConfigValue('publish_interval_ms', 999999)).assertEqual(300000);
+      expect(clampConfigValue('change_publish_min_interval_ms', 100)).assertEqual(1000);
     });
 
     it('build_feed_command_payload', 0, () => {
@@ -61,3 +62,4 @@ export default function petHomeValidatorsTest() {
     });
   });
 }
+

@@ -1,6 +1,6 @@
-﻿import { DailyReport, DeviceEvent, DeviceLatest, HistoryPoint } from '../model/PetHomeModels';
-import { PetHomeApi } from '../service/PetHomeApi';
-import { clampConfigValue, isValidTimeValue, normalizeTimeValue } from '../utils/PetHomeValidators';
+﻿import { DailyReport, DeviceEvent, DeviceLatest, HistoryPoint } from '../model/PetHomeModelsTs';
+import { ActuateCommandPayload, PetHomeApi, SetConfigPayload } from '../service/PetHomeApi';
+import { clampConfigValue, isValidTimeValue, normalizeTimeValue } from '../utils/PetHomeValidatorsTs';
 import dataPreferences from '@ohos.data.preferences';
 
 const DEFAULT_LATEST: DeviceLatest = {
@@ -32,6 +32,16 @@ const DEFAULT_DAILY_REPORT: DailyReport = {
   notes: [],
 };
 
+interface HistoryQueryParams {
+  from?: number;
+  to?: number;
+  step?: number;
+}
+
+interface SelectOptionItem {
+  value: string;
+}
+
 @Entry
 @Component
 struct Index {
@@ -46,6 +56,9 @@ struct Index {
 
   @State feedTargetInput: string = '50';
   @State foodThresholdInput: string = '50';
+  @State sampleIntervalInput: string = '1000';
+  @State publishIntervalInput: string = '60000';
+  @State changePublishMinIntervalInput: string = '5000';
   @State feedMaxRunInput: string = '20000';
   @State waterDebounceInput: string = '3000';
   @State waterOkHoldInput: string = '2000';
@@ -88,7 +101,7 @@ struct Index {
   @State currentMetric: string = 'temp_c';
 
   async aboutToAppear(): Promise<void> {
-    const context = getContext(this);
+    const context = this.getUIContext().getHostContext() as Context;
     try {
       this.pref = await dataPreferences.getPreferences(context, 'PetHomePrefs');
       const savedListStr = await this.pref.get('deviceIdList', '["69982a337f2e6c302f55fae1_PetHome_01"]') as string;
@@ -117,22 +130,29 @@ struct Index {
     this.refreshAll();
   }
 
-  private getHistoryParams(): { from?: number, to?: number, step?: number } {
+  private getHistoryParams(): HistoryQueryParams {
     const from = Date.parse(this.historyFromInput);
     const to = Date.parse(this.historyToInput);
     const step = Number(this.historyStepInput);
-    return {
-      from: Number.isFinite(from) ? from : undefined,
-      to: Number.isFinite(to) ? to : undefined,
-      step: Number.isFinite(step) && step > 0 ? step : undefined,
-    };
+    const params: HistoryQueryParams = {};
+    if (Number.isFinite(from)) {
+      params.from = from;
+    }
+    if (Number.isFinite(to)) {
+      params.to = to;
+    }
+    if (Number.isFinite(step) && step > 0) {
+      params.step = step;
+    }
+    return params;
   }
 
   private async refreshAll(): Promise<void> {
     this.isLoading = true;
     const latestResult = await this.api.getLatest();
     if (latestResult.ok) {
-      this.latest = latestResult.data;
+      const latestText = JSON.stringify(latestResult.data);
+      this.latest = JSON.parse(latestText) as DeviceLatest;
     }
 
     const eventResult = await this.api.getEvents();
@@ -149,7 +169,8 @@ struct Index {
 
     const reportResult = await this.api.getDailyReport();
     if (reportResult.ok) {
-      this.dailyReport = reportResult.data;
+      const reportText = JSON.stringify(reportResult.data);
+      this.dailyReport = JSON.parse(reportText) as DailyReport;
     }
 
     this.isLoading = false;
@@ -172,18 +193,31 @@ struct Index {
 
   private async onBindDevice(): Promise<void> {
     const trimmed = this.newDeviceIdInput.trim();
-    if (trimmed.length > 0 && !this.deviceIdList.includes(trimmed)) {
-      this.deviceIdList.push(trimmed);
-      if (this.pref) {
-        await this.pref.put('deviceIdList', JSON.stringify(this.deviceIdList));
-        await this.pref.flush();
-      }
-      this.onDeviceSwitch(trimmed);
-      this.newDeviceIdInput = '';
-    } else if (this.deviceIdList.includes(trimmed)) {
-      this.onDeviceSwitch(trimmed);
-      this.newDeviceIdInput = '';
+    if (trimmed.length === 0) {
+      this.message = '请输入设备ID';
+      return;
     }
+
+    this.isLoading = true;
+    const cloudListResult = await this.api.getDeviceList();
+    this.isLoading = false;
+    if (!cloudListResult.ok) {
+      this.message = `读取云端设备列表失败: ${cloudListResult.message}`;
+      return;
+    }
+    if (!cloudListResult.data.includes(trimmed)) {
+      this.message = '云端未找到该设备ID，请先在 IoTDA 控制台确认设备已创建';
+      return;
+    }
+
+    this.deviceIdList = cloudListResult.data;
+    if (this.pref) {
+      await this.pref.put('deviceIdList', JSON.stringify(this.deviceIdList));
+      await this.pref.flush();
+    }
+    await this.onDeviceSwitch(trimmed);
+    this.newDeviceIdInput = '';
+    this.message = `绑定成功: ${trimmed}`;
   }
 
   private async toggleLed(): Promise<void> {
@@ -200,12 +234,18 @@ struct Index {
 
   private async sendActuate(key: string, value: boolean): Promise<void> {
     this.isLoading = true;
-    const payload: Record<string, boolean> = {};
-    payload[key] = value;
+    const payload: ActuateCommandPayload = {};
+    if (key === 'led_on') {
+      payload.led_on = value;
+    } else if (key === 'fan_on') {
+      payload.fan_on = value;
+    } else if (key === 'pump_on') {
+      payload.pump_on = value;
+    }
     const result = await this.api.sendActuateCommand(payload);
     this.isLoading = false;
     this.message = result.ok
-      ? `命令回执: ${this.formatCommandResult(result.data.result)}`
+      ? `命令回执: ${this.formatCommandResult(result.data.result)} (${result.message})`
       : `命令失败: ${result.message}`;
     await this.refreshAll();
   }
@@ -217,12 +257,16 @@ struct Index {
     const result = await this.api.sendFeedCommand(feedTarget);
     this.isLoading = false;
     this.message = result.ok
-      ? `投喂回执: ${this.formatCommandResult(result.data.result)}`
+      ? `投喂回执: ${this.formatCommandResult(result.data.result)} (${result.message})`
       : `投喂失败: ${result.message}`;
     await this.refreshAll();
   }
 
   private async saveConfig(): Promise<void> {
+    const sampleInterval = clampConfigValue('sample_interval_ms', Number(this.sampleIntervalInput));
+    const publishInterval = clampConfigValue('publish_interval_ms', Number(this.publishIntervalInput));
+    const changePublishMinInterval =
+      clampConfigValue('change_publish_min_interval_ms', Number(this.changePublishMinIntervalInput));
     const feedTarget = clampConfigValue('feed_target_g', Number(this.feedTargetInput));
     const foodLow = clampConfigValue('food_low_threshold_g', Number(this.foodThresholdInput));
     const feedMaxRun = clampConfigValue('feed_max_run_ms', Number(this.feedMaxRunInput));
@@ -243,6 +287,9 @@ struct Index {
     const humHigh = clampConfigValue('hum_high_threshold_rh', Number(this.humHighThresholdInput));
     const humLow = clampConfigValue('hum_low_threshold_rh', Number(this.humLowThresholdInput));
 
+    this.sampleIntervalInput = `${sampleInterval}`;
+    this.publishIntervalInput = `${publishInterval}`;
+    this.changePublishMinIntervalInput = `${changePublishMinInterval}`;
     this.feedTargetInput = `${feedTarget}`;
     this.foodThresholdInput = `${foodLow}`;
     this.feedMaxRunInput = `${feedMaxRun}`;
@@ -258,31 +305,39 @@ struct Index {
     this.fanMaxOnInput = `${fanMaxOn}`;
     this.lightOnThresholdInput = `${lightOn}`;
     this.lightOffThresholdInput = `${lightOff}`;
+    this.tempHighThresholdInput = `${tempHigh}`;
+    this.tempLowThresholdInput = `${tempLow}`;
+    this.humHighThresholdInput = `${humHigh}`;
+    this.humLowThresholdInput = `${humLow}`;
 
-    const result = await this.api.sendSetConfig({
-      food_low_threshold_g: foodLow,
-      feed_target_g: feedTarget,
-      feed_max_run_ms: feedMaxRun,
-      water_debounce_ms: waterDebounce,
-      water_ok_hold_ms: waterOkHold,
-      pump_max_run_ms: pumpMaxRun,
-      pump_cooldown_ms: pumpCooldown,
-      voc_on_threshold: vocOn,
-      voc_off_threshold: vocOff,
-      voc_debounce_ms: vocDebounce,
-      voc_ok_hold_ms: vocOkHold,
-      fan_min_on_ms: fanMinOn,
-      fan_max_on_ms: fanMaxOn,
-      light_on_threshold: lightOn,
-      light_off_threshold: lightOff,
-      temp_high_threshold_c: tempHigh,
-      temp_low_threshold_c: tempLow,
-      hum_high_threshold_rh: humHigh,
-      hum_low_threshold_rh: humLow,
-      night_mode_enabled: this.nightModeEnabled,
-    });
+    const configPayload: SetConfigPayload = {};
+    configPayload.sample_interval_ms = sampleInterval;
+    configPayload.publish_interval_ms = publishInterval;
+    configPayload.change_publish_min_interval_ms = changePublishMinInterval;
+    configPayload.food_low_threshold_g = foodLow;
+    configPayload.feed_target_g = feedTarget;
+    configPayload.feed_max_run_ms = feedMaxRun;
+    configPayload.water_debounce_ms = waterDebounce;
+    configPayload.water_ok_hold_ms = waterOkHold;
+    configPayload.pump_max_run_ms = pumpMaxRun;
+    configPayload.pump_cooldown_ms = pumpCooldown;
+    configPayload.voc_on_threshold = vocOn;
+    configPayload.voc_off_threshold = vocOff;
+    configPayload.voc_debounce_ms = vocDebounce;
+    configPayload.voc_ok_hold_ms = vocOkHold;
+    configPayload.fan_min_on_ms = fanMinOn;
+    configPayload.fan_max_on_ms = fanMaxOn;
+    configPayload.light_on_threshold = lightOn;
+    configPayload.light_off_threshold = lightOff;
+    configPayload.temp_high_threshold_c = tempHigh;
+    configPayload.temp_low_threshold_c = tempLow;
+    configPayload.hum_high_threshold_rh = humHigh;
+    configPayload.hum_low_threshold_rh = humLow;
+    configPayload.night_mode_enabled = this.nightModeEnabled;
+
+    const result = await this.api.sendSetConfig(configPayload);
     this.message = result.ok
-      ? `配置下发成功: ${this.formatCommandResult(result.data.result)}`
+      ? `配置下发结果: ${this.formatCommandResult(result.data.result)} (${result.message})`
       : `配置下发失败: ${result.message}`;
     await this.refreshAll();
   }
@@ -299,9 +354,9 @@ struct Index {
     }
 
     this.isLoading = true;
-    const modeResult = await this.api.sendSetConfig({
-      night_mode_enabled: this.nightModeEnabled,
-    });
+    const modePayload: SetConfigPayload = {};
+    modePayload.night_mode_enabled = this.nightModeEnabled;
+    const modeResult = await this.api.sendSetConfig(modePayload);
     if (!modeResult.ok) {
       this.isLoading = false;
       this.message = `夜间模式开关下发失败: ${modeResult.message}`;
@@ -312,7 +367,7 @@ struct Index {
     const windowResult = await this.api.sendSetNightWindow(start, end);
     this.isLoading = false;
     this.message = windowResult.ok
-      ? `夜间时间窗已生效: ${start}-${end}`
+      ? `夜间时间窗下发结果: ${start}-${end} (${windowResult.message})`
       : `夜间时间窗下发失败: ${windowResult.message}`;
     await this.refreshAll();
   }
@@ -372,6 +427,9 @@ struct Index {
   private formatCommandResult(result: string): string {
     if (result === 'OK') {
       return '成功';
+    }
+    if (result === 'ACCEPTED') {
+      return '已受理';
     }
     if (result === 'REJECTED') {
       return '已拒绝';
@@ -451,6 +509,14 @@ struct Index {
     return `${this.twoDigits(date.getHours())}:${this.twoDigits(date.getMinutes())}:${this.twoDigits(date.getSeconds())}`;
   }
 
+  private buildDeviceOptions(): SelectOptionItem[] {
+    const options: SelectOptionItem[] = [];
+    for (let i = 0; i < this.deviceIdList.length; i++) {
+      options.push({ value: this.deviceIdList[i] });
+    }
+    return options;
+  }
+
   @Builder
   private renderHeaderAndActions(): void {
     Text('智能宠物屋控制台')
@@ -458,9 +524,7 @@ struct Index {
       .fontWeight(FontWeight.Bold)
 
     Row({ space: 8 }) {
-      Select(
-        this.deviceIdList.map(dev => ({ value: dev }))
-      )
+      Select(this.buildDeviceOptions())
         .selected(this.deviceIdList.indexOf(this.selectedDeviceId))
         .value(this.selectedDeviceId)
         .onSelect((index: number) => {
@@ -522,6 +586,24 @@ struct Index {
     Column({ space: 6 }) {
       Text('参数配置').fontSize(18).fontWeight(FontWeight.Medium)
 
+      Row({ space: 8 }) {
+        Text('采样周期(毫秒):').width('35%')
+        TextInput({ text: this.sampleIntervalInput })
+          .type(InputType.Number)
+          .onChange((v: string) => this.sampleIntervalInput = v)
+      }
+      Row({ space: 8 }) {
+        Text('上报周期(毫秒):').width('35%')
+        TextInput({ text: this.publishIntervalInput })
+          .type(InputType.Number)
+          .onChange((v: string) => this.publishIntervalInput = v)
+      }
+      Row({ space: 8 }) {
+        Text('变化上报最小间隔(毫秒):').width('35%')
+        TextInput({ text: this.changePublishMinIntervalInput })
+          .type(InputType.Number)
+          .onChange((v: string) => this.changePublishMinIntervalInput = v)
+      }
       Row({ space: 8 }) {
         Text('单次投喂(克):').width('35%')
         TextInput({ text: this.feedTargetInput })
@@ -859,3 +941,6 @@ struct Index {
     .scrollBar(BarState.Auto)
   }
 }
+
+
+
